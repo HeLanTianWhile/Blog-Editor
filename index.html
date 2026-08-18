@@ -69,6 +69,8 @@ body{background:#f8fafc;color:#1e293b;height:100vh;display:flex;flex-direction:c
 .preview blockquote{border-left:4px solid #94a3b8;padding-left:12px;color:#475569;margin:1em 0;}
 .preview ul,.preview ol{padding-left:2em;margin:0.8em 0;}
 .preview img{max-width:100%;border-radius:4px;}
+.preview a{color:#2563eb;text-decoration:none;border-bottom:1px solid #93c5fd;}
+.preview a:hover{color:#1d4ed8;border-bottom-color:#2563eb;}
 
 /* 弹窗图片链接 */
 .modal-mask{
@@ -79,6 +81,7 @@ body{background:#f8fafc;color:#1e293b;height:100vh;display:flex;flex-direction:c
   background:#fff;padding:20px;border-radius:10px;width:min(420px,90vw);
 }
 .modal-box input{width:100%;padding:8px 10px;margin:10px 0;border:1px solid #cbd5e1;border-radius:6px;}
+.modal-box label{font-size:13px;color:#64748b;display:block;margin-top:8px;}
 .modal-buttons{display:flex;gap:8px;justify-content:flex-end;margin-top:8px;}
 .modal-buttons button{padding:6px 12px;border-radius:6px;border:1px solid #cbd5e1;cursor:pointer;}
 </style>
@@ -105,6 +108,7 @@ body{background:#f8fafc;color:#1e293b;height:100vh;display:flex;flex-direction:c
   <button data-cmd="quote">引用</button>
   <div class="divider"></div>
 
+  <button id="btnLink">插入链接</button>
   <button id="btnImgUrl">图片链接</button>
   <button id="btnImgLocal">本地图片</button>
   <input type="file" id="imgLocalInput" accept="image/*" class="hide">
@@ -139,6 +143,21 @@ body{background:#f8fafc;color:#1e293b;height:100vh;display:flex;flex-direction:c
   </div>
 </div>
 
+<!-- 超链接弹窗 -->
+<div class="modal-mask" id="linkModal">
+  <div class="modal-box">
+    <h4>插入链接</h4>
+    <label>链接文字</label>
+    <input type="text" id="linkTextInput" placeholder="显示的文字">
+    <label>链接地址</label>
+    <input type="text" id="linkUrlInput" placeholder="https://example.com">
+    <div class="modal-buttons">
+      <button id="linkModalCancel">取消</button>
+      <button id="linkModalOk">确定</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // 简易md转html（够用博客场景）
 function mdToHtml(md){
@@ -151,7 +170,10 @@ function mdToHtml(md){
     .replace(/~~(.*?)~~/g,'<s>$1</s>')
     .replace(/^> (.*$)/gim,'<blockquote>$1</blockquote>')
     .replace(/^\- (.*$)/gim,'<li>$1</li>')
+    // 图片必须在链接之前替换，避免 ![alt](url) 被链接规则匹配
     .replace(/!\[(.*?)\]\((.*?)\)/g,'<img alt="$1" src="$2">')
+    // 超链接 [text](url) -> <a href="url" target="_blank">text</a>
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
     .replace(/\n/g,'<br>');
   return html;
 }
@@ -165,7 +187,10 @@ function htmlToMd(html){
     .replace(/<em>(.*?)<\/em>/gi,'*$1*')
     .replace(/<s>(.*?)<\/s>/gi,'~~$1~~')
     .replace(/<blockquote>(.*?)<\/blockquote>/gi,'> $1\n')
+    // 图片在链接之前反向转换
     .replace(/<img.*?src="(.*?)".*?>/gi,'![img]($1)')
+    // 超链接 <a href="url" ...>text</a> -> [text](url)
+    .replace(/<a[^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/gi,'[$2]($1)')
     .replace(/<br\s*\/?>/gi,'\n')
     .replace(/<[^>]+>/g,'');
   return md;
@@ -177,6 +202,13 @@ const mdEditor = document.getElementById('mdEditor');
 const htmlEditor = document.getElementById('htmlEditor');
 const wysiwygEditor = document.getElementById('wysiwygEditor');
 const previewBox = document.getElementById('previewBox');
+
+const btnLink = document.getElementById('btnLink');
+const linkModal = document.getElementById('linkModal');
+const linkTextInput = document.getElementById('linkTextInput');
+const linkUrlInput = document.getElementById('linkUrlInput');
+const linkModalCancel = document.getElementById('linkModalCancel');
+const linkModalOk = document.getElementById('linkModalOk');
 
 const btnImgUrl = document.getElementById('btnImgUrl');
 const btnImgLocal = document.getElementById('btnImgLocal');
@@ -192,6 +224,8 @@ const btnExportMd = document.getElementById('btnExportMd');
 const btnExportHtml = document.getElementById('btnExportHtml');
 
 let currentMode = 'md';
+// 记录 wysiwyg 中选中的文本，用于弹窗打开后恢复选区
+let savedRange = null;
 
 // 切换编辑器显示
 function switchEditor(mode){
@@ -274,6 +308,45 @@ function syncToolbarState(){
 wysiwygEditor.addEventListener('mouseup',syncToolbarState);
 wysiwygEditor.addEventListener('keyup',syncToolbarState);
 
+// 保存 wysiwyg 当前选区
+function saveSelection(){
+  const sel = window.getSelection();
+  if(sel.rangeCount > 0){
+    savedRange = sel.getRangeAt(0).cloneRange();
+  }
+}
+// 恢复 wysiwyg 选区
+function restoreSelection(){
+  if(savedRange){
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(savedRange);
+  }
+}
+
+// ===== 超链接弹窗 =====
+btnLink.onclick = ()=>{
+  // wysiwyg 模式下，把选中的文字预填到链接文字
+  let selectedText = '';
+  if(currentMode==='wysiwyg'){
+    saveSelection();
+    const sel = window.getSelection();
+    selectedText = sel.toString();
+  }
+  linkTextInput.value = selectedText || '';
+  linkUrlInput.value = '';
+  linkModal.style.display = 'flex';
+  linkTextInput.focus();
+};
+linkModalCancel.onclick = ()=>linkModal.style.display='none';
+linkModalOk.onclick = ()=>{
+  const text = linkTextInput.value.trim();
+  const url = linkUrlInput.value.trim();
+  if(!url){linkModal.style.display='none';return;}
+  insertLink(url, text || url);
+  linkModal.style.display='none';
+};
+
 // 图片链接弹窗
 btnImgUrl.onclick = ()=>{
   imgModal.style.display='flex';
@@ -310,6 +383,37 @@ function insertImage(src){
   }else if(currentMode==='wysiwyg'){
     wysiwygEditor.focus();
     document.execCommand('insertImage',false,src);
+  }
+  updatePreview();
+}
+
+// 插入超链接
+function insertLink(url, text){
+  if(currentMode==='md'){
+    // 在光标位置插入，若无选区则追加到末尾
+    const start = mdEditor.selectionStart;
+    const end = mdEditor.selectionEnd;
+    const before = mdEditor.value.slice(0, start);
+    const selected = mdEditor.value.slice(start, end);
+    const after = mdEditor.value.slice(end);
+    const linkText = selected || text;
+    const mdLink = `[${linkText}](${url})`;
+    mdEditor.value = before + mdLink + after;
+    // 恢复光标到插入内容之后
+    const newPos = start + mdLink.length;
+    mdEditor.setSelectionRange(newPos, newPos);
+  }else if(currentMode==='html'){
+    htmlEditor.value += `<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+  }else if(currentMode==='wysiwyg'){
+    wysiwygEditor.focus();
+    restoreSelection();
+    // 如果有选中文本，createLink 会把选中文字变成链接；否则插入链接文字
+    const sel = window.getSelection();
+    if(sel && sel.toString()){
+      document.execCommand('createLink', false, url);
+    }else{
+      document.execCommand('insertHTML', false, `<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`);
+    }
   }
   updatePreview();
 }
